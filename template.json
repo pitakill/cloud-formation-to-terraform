@@ -1,0 +1,1580 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Cloudformation stack for Jenkins ECS",
+    "Parameters": {
+        "KeyName": {
+            "Description": "Optional: the EC2 Key Pair to allow SSH access to the instances",
+            "Type": "String",
+            "Default": "j9-ec2-key-v2"
+        },
+        "AllowedIPRange": {
+            "Description": "The public IP address range that can be used to connect to the instances.  Currently vpn.streamweaver.com Elastic IP",
+            "Type": "String",
+            "MinLength": "9",
+            "MaxLength": "18",
+            "Default": "34.226.1.219/32",
+            "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+            "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+        },
+        "VPCIPRange": {
+            "Description": "The private IP address range for allocating IPs within the VPC.",
+            "Type": "String",
+            "MinLength": "9",
+            "MaxLength": "18",
+            "Default": "10.0.0.0/16",
+            "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+            "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+        },
+        "DockerImage": {
+            "Description": "The docker image to use for Jenkins",
+            "Type": "String",
+            "Default": "958918946303.dkr.ecr.us-east-1.amazonaws.com/streamweaver/jenkins-master:latest"
+        }
+    },
+    "Mappings": {
+        "RegionAmazonECSOptimizedAMIMapping": {
+            "us-east-2": {
+                "AMI": "ami-028a9de0a7e353ed9"
+            },
+            "us-east-1": {
+                "AMI": "ami-00129b193dc81bc31"
+            },
+            "us-west-2": {
+                "AMI": "ami-00d4f478"
+            },
+            "us-west-1": {
+                "AMI": "ami-0d438d09af26c9583"
+            },
+            "eu-west-3": {
+                "AMI": "ami-07da674f0655ef4e1"
+            },
+            "eu-west-2": {
+                "AMI": "ami-a44db8c3"
+            },
+            "eu-west-1": {
+                "AMI": "ami-0af844a965e5738db"
+            },
+            "eu-central-1": {
+                "AMI": "ami-0291ba887ba0d515f"
+            },
+            "ap-northeast-2": {
+                "AMI": "ami-047d2a61f94f862dc"
+            },
+            "ap-northeast-1": {
+                "AMI": "ami-0041c416aa23033a2"
+            },
+            "ap-southeast-2": {
+                "AMI": "ami-0092e55c70015d8c3"
+            },
+            "ap-southeast-1": {
+                "AMI": "ami-091bf462afdb02c60"
+            },
+            "ca-central-1": {
+                "AMI": "ami-192fa27d"
+            },
+            "ap-south-1": {
+                "AMI": "ami-0c179ca015d301829"
+            },
+            "sa-east-1": {
+                "AMI": "ami-0018ff8ee48970ac3"
+            },
+            "us-gov-west-1": {
+                "AMI": "ami-c6079ba7"
+            }
+        }
+    },
+    "Conditions": {
+        "HasKeyName": {
+            "Fn::Not": [
+                {
+                    "Fn::Equals": [
+                        "",
+                        {
+                            "Ref": "KeyName"
+                        }
+                    ]
+                }
+            ]
+        }
+    },
+    "Resources": {
+        "VPC": {
+            "Type": "AWS::EC2::VPC",
+            "Properties": {
+                "EnableDnsSupport": true,
+                "EnableDnsHostnames": true,
+                "CidrBlock": "10.0.0.0/16", 
+                "Tags": [
+                    {
+                        "Key": "Application",
+                        "Value": {
+                            "Ref": "AWS::StackId"
+                        }
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752"
+                }
+            }
+        },
+        "InternetGateway": {
+            "Type": "AWS::EC2::InternetGateway",
+            "Properties": {
+                "Tags": [
+                    {
+                        "Key": "Application",
+                        "Value": {
+                            "Ref": "AWS::StackName"
+                        }
+                    },
+                    {
+                        "Key": "Network",
+                        "Value": "Public"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "45a4b85c-003b-4298-9a48-3c7f0fe26598"
+                }
+            }
+        },
+        "GatewayToInternet": {
+            "Type": "AWS::EC2::VPCGatewayAttachment",
+            "Properties": {
+                "VpcId": {
+                    "Ref": "VPC"
+                },
+                "InternetGatewayId": {
+                    "Ref": "InternetGateway"
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "c197d599-097a-4753-9e58-26c0e221f7f0"
+                }
+            }
+        },
+        "RouteTable": {
+            "Type": "AWS::EC2::RouteTable",
+            "Properties": {
+                "VpcId": {
+                    "Ref": "VPC"
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "d05037db-b227-46e7-8fa5-146f3ffd3052"
+                }
+            }
+        },
+        "SubnetRouteTableAssoc": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "RouteTable"
+                },
+                "SubnetId": {
+                    "Ref": "Subnet"
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "f6304c35-e18b-477c-ab03-8a47f3225723"
+                }
+            }
+        },
+        "InternetGatewayRoute": {
+            "Type": "AWS::EC2::Route",
+            "Properties": {
+                "DestinationCidrBlock": "0.0.0.0/0",
+                "RouteTableId": {
+                    "Ref": "RouteTable"
+                },
+                "GatewayId": {
+                    "Ref": "InternetGateway"
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "59d0f610-97d0-4e85-9179-e87dbaccb7b5"
+                }
+            }
+        },
+        "Subnet": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "VpcId": {
+                    "Ref": "VPC"
+                },
+                "CidrBlock": "0.0.0.0/0",
+                "Tags": [
+                    {
+                        "Key": "Application",
+                        "Value": {
+                            "Ref": "AWS::StackId"
+                        }
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "d6de8f43-1a42-4ecf-ac74-55835b46d83d"
+                }
+            }
+        },
+        "VPNSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "SecurityGroup VPN endpoint",
+                "VpcId": {
+                    "Ref": "VPC"
+                },
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 22,
+                        "ToPort": 22,
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 493,
+                        "ToPort": 493,
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 443,
+                        "ToPort": 443,
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "udp",
+                        "FromPort": 1194,
+                        "ToPort": 1194,
+                        "CidrIp": "0.0.0.0/0"
+                    }
+                ]
+            }
+        },
+        "VPNInstance": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "ImageId": "ami-0b83c99d550e48534",
+                "InstanceType": "t2.micro",
+                "KeyName": {
+                    "Fn::If": [
+                        "HasKeyName",
+                        {
+                            "Ref": "KeyName"
+                        },
+                        {
+                            "Ref": "AWS::NoValue"
+                        }
+                    ]
+                },
+                "SecurityGroupIds": [
+                    {
+                        "Ref": "VPNSecurityGroup"
+                    }
+                ],
+                "SubnetId": {
+                    "Ref": "Subnet"
+                }
+            }
+        },
+        "VPNElasticIP": {
+            "Type": "AWS::EC2::EIP",
+            "Properties": {
+                "Domain": "vpc"
+            }
+        },
+        "VPNEIPAssociaton": {
+            "Type": "AWS::EC2::EIPAssociation",
+            "Properties": {
+                "AllocationId": "eipalloc-01871ee99d3f86995",
+                "InstanceId": {
+                    "Ref": "VPNInstance"
+                }
+            }
+        },
+        "ECSServiceRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "ecs.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "ecs-service",
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+                                        "elasticloadbalancing:DeregisterTargets",
+                                        "elasticloadbalancing:Describe*",
+                                        "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+                                        "elasticloadbalancing:RegisterTargets",
+                                        "ec2:Describe*",
+                                        "ec2:AuthorizeSecurityGroupIngress"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "acb9a64e-d641-4ef1-bf90-07296d6e376a"
+                }
+            }
+        },
+        "EC2Role": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "ec2.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "ecs-service",
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "ecs:*",
+                                        "elasticloadbalancing:Describe*",
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents",
+                                        "ecr:GetAuthorizationToken",
+                                        "ecr:BatchCheckLayerAvailability",
+                                        "ecr:GetDownloadUrlForLayer",
+                                        "ecr:BatchGetImage"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "b80b3e71-e111-4b4c-9c8a-b0b98dad58f2"
+                }
+            }
+        },
+        "JenkinsECSInstanceProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "Properties": {
+                "Path": "/",
+                "Roles": [
+                    {
+                        "Ref": "EC2Role"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "da347b7d-72c3-4882-b56c-72838717ebb4"
+                }
+            }
+        },
+        "JenkinsSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "SecurityGroup for Jenkins instances: master and slaves",
+                "VpcId": {
+                    "Ref": "VPC"
+                },
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 22,
+                        "ToPort": 22,
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 8080,
+                        "ToPort": 8080,
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 50000,
+                        "ToPort": 50000,
+                        "CidrIp": "0.0.0.0/0"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "180b6e52-771f-4396-a9c9-b84f9089d171"
+                }
+            }
+        },
+        "JenkinsELBSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "SecurityGroup for Jenkins ELB",
+                "VpcId": {
+                    "Ref": "VPC"
+                },
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 80,
+                        "ToPort": 80,
+                        "CidrIp": "34.226.1.219/32"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "9e5481d2-c8a5-47cf-910a-b2c3e7029afe"
+                }
+            }
+        },
+        "EFSSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Security group for EFS mount target",
+                "VpcId": {
+                    "Ref": "VPC"
+                },
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 2049,
+                        "ToPort": 2049,
+                        "CidrIp": "0.0.0.0/0"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "c66008e8-da69-41d9-b5a6-f734bf1d4ed3"
+                }
+            }
+        },
+        "JenkinsEFS": {
+            "Type": "AWS::EFS::FileSystem",
+            "Properties": {
+                "FileSystemTags": [
+                    {
+                        "Key": "Name",
+                        "Value": "JenkinsEFS"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "760682ab-97b9-4697-8c96-12e9ccb96f7f"
+                }
+            }
+        },
+        "MountTarget": {
+            "Type": "AWS::EFS::MountTarget",
+            "Properties": {
+                "FileSystemId": {
+                    "Ref": "JenkinsEFS"
+                },
+                "SubnetId": {
+                    "Ref": "Subnet"
+                },
+                "SecurityGroups": [
+                    {
+                        "Ref": "EFSSecurityGroup"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "ddce9c0d-0d5b-4c66-a5b2-a6baa1e31c0a"
+                }
+            }
+        },
+        "JenkinsELB": {
+            "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+            "Properties": {
+                "LoadBalancerName": "jenkins-opstream-elb",
+                "Scheme": "internet-facing",
+                "Subnets": [
+                    {
+                        "Ref": "Subnet"
+                    },
+                    {
+                        "Ref": "Subnet"
+                    },
+                    {
+                        "Ref": "Subnet"
+                    },
+                    {
+                        "Ref": "Subnet"
+                    },
+                    {
+                        "Ref": "Subnet"
+                    },
+                    {
+                        "Ref": "Subnet"
+                    },
+                    {
+                        "Ref": "Subnet"
+                    }
+                ],
+                "SecurityGroups": [
+                    {
+                        "Ref": "JenkinsELBSecurityGroup"
+                    }
+                ],
+                "Listeners": [
+                    {
+                        "InstancePort": "8080",
+                        "InstanceProtocol": "HTTP",
+                        "LoadBalancerPort": "80",
+                        "Protocol": "HTTP",
+                        "PolicyNames": [
+                            "JenkinsELBStickiness"
+                        ]
+                    }
+                ],
+                "LBCookieStickinessPolicy": [
+                    {
+                        "CookieExpirationPeriod": "3600",
+                        "PolicyName": "JenkinsELBStickiness"
+                    }
+                ],
+                "HealthCheck": {
+                    "HealthyThreshold": "3",
+                    "Interval": "20",
+                    "Target": "HTTP:8080/login",
+                    "Timeout": "2",
+                    "UnhealthyThreshold": "10"
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "92ada2f8-51b3-4e46-b25d-004844a58c60"
+                }
+            }
+        },
+        "JenkinsCluster": {
+            "Type": "AWS::ECS::Cluster",
+            "Properties": {
+                "ClusterName": "jenkins-opstream-cluster"
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "ac429c18-92d5-4d83-9efd-b09a4a520157"
+                }
+            }
+        },
+        "JenkinsMasterTaskDefinition": {
+            "Type": "AWS::ECS::TaskDefinition",
+            "Properties": {
+                "Family": "jenkins-opstream-master",
+                "NetworkMode": "bridge",
+                "ContainerDefinitions": [
+                    {
+                        "Name": "jenkins-opstream-master",
+                        "Image": "958918946303.dkr.ecr.us-east-1.amazonaws.com/streamweaver/jenkins-master:latest",
+                        "MountPoints": [
+                            {
+                                "SourceVolume": "data-volume",
+                                "ContainerPath": "/var/jenkins_home"
+                            }
+                        ],
+                        "Essential": true,
+                        "Cpu": 1024,
+                        "MemoryReservation": 1950,
+                        "PortMappings": [
+                            {
+                                "HostPort": 8080,
+                                "ContainerPort": 8080,
+                                "Protocol": "tcp"
+                            },
+                            {
+                                "HostPort": 50000,
+                                "ContainerPort": 50000,
+                                "Protocol": "tcp"
+                            }
+                        ]
+                    }
+                ],
+                "PlacementConstraints": [
+                    {
+                        "Type": "memberOf",
+                        "Expression": "attribute:ecs.instance-type == t2.large"
+                    }
+                ],
+                "Volumes": [
+                    {
+                        "Host": {
+                            "SourcePath": "/data/"
+                        },
+                        "Name": "data-volume"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "917a1a8a-3b3d-4acd-91e1-a79d101b9119"
+                }
+            }
+        },
+        "JenkinsSlaveTaskDefinition": {
+            "Type": "AWS::ECS::TaskDefinition",
+            "Properties": {
+                "Family": "jenkins-opstream-slave",
+                "NetworkMode": "bridge",
+                "ContainerDefinitions": [
+                    {
+                        "Name": "jenkins-opstream-slave",
+                        "Image": "958918946303.dkr.ecr.us-east-1.amazonaws.com/streamweaver/jenkins-slave:latest",
+                        "MountPoints": [
+                            {
+                                "SourceVolume": "data-volume",
+                                "ContainerPath": "/var/jenkins_home"
+                            }
+                        ],
+                        "Essential": true,
+                        "Cpu": 8190,
+                        "MemoryReservation": 31000,
+                        "Ulimits": [
+                            {
+                                "SoftLimit": 100000,
+                                "HardLimit": 200000,
+                                "Name": "nofile"
+                            }
+                        ]
+                    }
+                ],
+                "Volumes": [
+                    {
+                        "Host": {
+                            "SourcePath": "/data/"
+                        },
+                        "Name": "data-volume"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "eb4f3f37-e11a-42ca-a49e-d331ff4fb36c"
+                }
+            }
+        },
+        "JenkinsITSlaveTaskDefinition": {
+            "Type": "AWS::ECS::TaskDefinition",
+            "Properties": {
+                "Family": "jenkins-opstream-it-slave",
+                "NetworkMode": "bridge",
+                "ContainerDefinitions": [
+                    {
+                        "Name": "jenkins-opstream-it-slave",
+                        "Image": "958918946303.dkr.ecr.us-east-1.amazonaws.com/streamweaver/jenkins-slave:latest",
+                        "MountPoints": [
+                            {
+                                "SourceVolume": "data-volume",
+                                "ContainerPath": "/var/jenkins_home"
+                            }
+                        ],
+                        "Essential": true,
+                        "Cpu": 1020,
+                        "MemoryReservation": 3900
+                    }
+                ],
+                "Volumes": [
+                    {
+                        "Host": {
+                            "SourcePath": "/data/"
+                        },
+                        "Name": "data-volume"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "c4836ad6-b456-4ca1-9fb6-15867fe6bfc1"
+                }
+            }
+        },
+        "JenkinsMasterECSService": {
+            "DependsOn": [
+                "JenkinsELB"
+            ],
+            "Type": "AWS::ECS::Service",
+            "Properties": {
+                "Cluster": "jenkins-opstream-cluster",
+                "DesiredCount": 1,
+                "ServiceName": "jenkins-opstream-master",
+                "TaskDefinition": {
+                    "Ref": "JenkinsMasterTaskDefinition"
+                },
+                "Role": {
+                    "Ref": "ECSServiceRole"
+                },
+                "LoadBalancers": [
+                    {
+                        "LoadBalancerName": "jenkins-opstream-elb",
+                        "ContainerPort": 8080,
+                        "ContainerName": "jenkins-opstream-master"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "3f7a5738-f766-4272-a329-3e7e421443a7"
+                }
+            }
+        },
+        "JenkinsMasterECSLaunchConfiguration": {
+            "Type": "AWS::AutoScaling::LaunchConfiguration",
+            "Properties": {
+                "AssociatePublicIpAddress": true,
+                "ImageId": "ami-00129b193dc81bc31",
+                "IamInstanceProfile": {
+                    "Ref": "JenkinsECSInstanceProfile"
+                },
+                "InstanceType": "t2.large",
+                "KeyName": {
+                    "Fn::If": [
+                        "HasKeyName",
+                        {
+                            "Ref": "KeyName"
+                        },
+                        {
+                            "Ref": "AWS::NoValue"
+                        }
+                    ]
+                },
+                "SecurityGroups": [
+                    {
+                        "Ref": "JenkinsSecurityGroup"
+                    }
+                ],
+                "BlockDeviceMappings": [
+                    {
+                        "DeviceName": "/dev/xvdcz",
+                        "Ebs": {
+                            "VolumeSize": 24,
+                            "DeleteOnTermination": true
+                        }
+                    }
+                ],
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [
+                            "",
+                            [
+                                "#!/bin/bash\n",
+                                "echo 'ECS_CLUSTER=jenkins-opstream-cluster' >> /etc/ecs/ecs.config\n",
+                                "#Mount EFS volume\n",
+                                "yum install -y nfs-utils\n",
+                                "EC2_AVAIL_ZONE=`curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone`\n",
+                                "EC2_REGION=",
+                                {
+                                    "Ref": "AWS::Region"
+                                },
+                                "\n",
+                                "EFS_FILE_SYSTEM_ID=",
+                                {
+                                    "Ref": "JenkinsEFS"
+                                },
+                                "\n",
+                                "EFS_PATH=$EC2_AVAIL_ZONE.$EFS_FILE_SYSTEM_ID.efs.$EC2_REGION.amazonaws.com\n",
+                                "mkdir /data\n",
+                                "mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2 $EFS_PATH:/ /data\n",
+                                "#Give ownership to jenkins user\n",
+                                "chown 1000 /data\n"
+                            ]
+                        ]
+                    }
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "07c58891-2cca-481e-bfbd-b779d93b66e0"
+                }
+            }
+        },
+        "JenkinsSlaveECSLaunchConfiguration": {
+            "Type": "AWS::AutoScaling::LaunchConfiguration",
+            "Properties": {
+                "AssociatePublicIpAddress": true,
+                "ImageId": "ami-035bb5d370cb7b241",
+                "IamInstanceProfile": {
+                    "Ref": "JenkinsECSInstanceProfile"
+                },
+                "InstanceType": "m5.2xlarge",
+                "KeyName": {
+                    "Fn::If": [
+                        "HasKeyName",
+                        {
+                            "Ref": "KeyName"
+                        },
+                        {
+                            "Ref": "AWS::NoValue"
+                        }
+                    ]
+                },
+                "SecurityGroups": [
+                    {
+                        "Ref": "JenkinsSecurityGroup"
+                    }
+                ],
+                "BlockDeviceMappings": [
+                    {
+                        "DeviceName": "/dev/xvdcz",
+                        "Ebs": {
+                            "VolumeSize": 50,
+                            "DeleteOnTermination": true
+                        }
+                    }
+                ],
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [
+                            "",
+                            [
+                                "#!/bin/bash\n",
+                                "echo 'ECS_CLUSTER=jenkins-opstream-cluster' >> /etc/ecs/ecs.config\n",
+                                "#Mount EFS volume\n",
+                                "yum install -y nfs-utils\n",
+                                "EC2_AVAIL_ZONE=`curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone`\n",
+                                "EC2_REGION=",
+                                {
+                                    "Ref": "AWS::Region"
+                                },
+                                "\n",
+                                "EFS_FILE_SYSTEM_ID=",
+                                {
+                                    "Ref": "JenkinsEFS"
+                                },
+                                "\n",
+                                "EFS_PATH=$EC2_AVAIL_ZONE.$EFS_FILE_SYSTEM_ID.efs.$EC2_REGION.amazonaws.com\n",
+                                "mkdir /data\n",
+                                "mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2 $EFS_PATH:/ /data\n",
+                                "#Give ownership to jenkins user\n",
+                                "chown 1000 /data\n",
+                                "echo '*                hard    nofile          200000' >> /etc/security/limits.conf\n",
+                                "echo '*                soft    nofile          100000' >> /etc/security/limits.conf\n",
+                                "echo 'session required pam_limits.so' >> /etc/pam.d/common-session\n"
+                            ]
+                        ]
+                    }
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "32780aa9-01da-42e6-9dba-aeeadeb468a6"
+                }
+            }
+        },
+        "JenkinsMasterECSAutoScaling": {
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "Properties": {
+                "VPCZoneIdentifier": [
+                    {
+                        "Ref": "Subnet"
+                    }
+                ],
+                "LaunchConfigurationName": {
+                    "Ref": "JenkinsMasterECSLaunchConfiguration"
+                },
+                "MinSize": "1",
+                "MaxSize": "1",
+                "DesiredCapacity": "1",
+                "HealthCheckType": "EC2",
+                "HealthCheckGracePeriod": 400,
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "jenkins-opstream-ecs-instance",
+                        "PropagateAtLaunch": true
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "459bec8e-c4bc-4e40-8f62-708f01b09f29"
+                }
+            }
+        },
+        "JenkinsSlaveECSAutoScaling": {
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "Properties": {
+                "VPCZoneIdentifier": [
+                    {
+                        "Ref": "Subnet"
+                    },
+                    {
+                        "Ref": "Subnet"
+                    },
+                    {
+                        "Ref": "Subnet"
+                    },
+                    {
+                        "Ref": "Subnet"
+                    },
+                    {
+                        "Ref": "Subnet"
+                    },
+                    {
+                        "Ref": "Subnet"
+                    },
+                    {
+                        "Ref": "Subnet"
+                    }
+                ],
+                "LaunchConfigurationName": {
+                    "Ref": "JenkinsSlaveECSLaunchConfiguration"
+                },
+                "MinSize": "0",
+                "MaxSize": "3",
+                "DesiredCapacity": "0",
+                "HealthCheckType": "EC2",
+                "HealthCheckGracePeriod": 400,
+                "MetricsCollection": [
+                    {
+                        "Granularity": "1Minute",
+                        "Metrics": []
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "jenkins-opstream-ecs-instance",
+                        "PropagateAtLaunch": true
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "459bec8e-c4bc-4e40-8f62-708f01b09f29"
+                }
+            }
+        },
+        "JenkinsClusterScaleUpPolicy": {
+            "Type": "AWS::AutoScaling::ScalingPolicy",
+            "Properties": {
+                "AdjustmentType": "ChangeInCapacity",
+                "AutoScalingGroupName": {
+                    "Ref": "JenkinsSlaveECSAutoScaling"
+                },
+                "EstimatedInstanceWarmup": 60,
+                "MetricAggregationType": "Average",
+                "PolicyType": "StepScaling",
+                "StepAdjustments": [
+                    {
+                        "MetricIntervalLowerBound": 0,
+                        "ScalingAdjustment": 2
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "0f196f02-1ee6-4c87-8216-6298866fcb95"
+                }
+            }
+        },
+        "JenkinsClusterScaleUpAlarm": {
+            "Type": "AWS::CloudWatch::Alarm",
+            "Properties": {
+                "AlarmDescription": "CPU utilization above 5% during the last minute",
+                "AlarmName": "JenkinsClusterScaleUpAlarm",
+                "AlarmActions": [
+                    {
+                        "Ref": "JenkinsClusterScaleUpPolicy"
+                    }
+                ],
+                "Dimensions": [
+                    {
+                        "Name": "ClusterName",
+                        "Value": "jenkins-opstream-cluster"
+                    }
+                ],
+                "MetricName": "CPUUtilization",
+                "Namespace": "AWS/ECS",
+                "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+                "Statistic": "Average",
+                "Threshold": 2,
+                "Period": 60,
+                "EvaluationPeriods": 1,
+                "TreatMissingData": "notBreaching"
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "43f0fb47-2788-497f-a439-c93092c7de67"
+                }
+            }
+        },
+        "JenkinsClusterScaleDownPolicy": {
+            "Type": "AWS::AutoScaling::ScalingPolicy",
+            "Properties": {
+                "AdjustmentType": "ChangeInCapacity",
+                "AutoScalingGroupName": {
+                    "Ref": "JenkinsSlaveECSAutoScaling"
+                },
+                "Cooldown": "120",
+                "ScalingAdjustment": -1
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "b50a238c-9c7e-4348-9895-86e2f8b126c6"
+                }
+            }
+        },
+        "JenkinsClusterScaleDownAlarm": {
+            "Type": "AWS::CloudWatch::Alarm",
+            "Properties": {
+                "AlarmDescription": "CPU utilization is under 20% for the last 45 min",
+                "AlarmName": "JenkinsClusterScaleDownAlarm",
+                "AlarmActions": [
+                    {
+                        "Ref": "JenkinsClusterScaleDownPolicy"
+                    }
+                ],
+                "Dimensions": [
+                    {
+                        "Name": "ClusterName",
+                        "Value": "jenkins-opstream-cluster"
+                    }
+                ],
+                "MetricName": "CPUUtilization",
+                "Namespace": "AWS/ECS",
+                "ComparisonOperator": "LessThanThreshold",
+                "Statistic": "Average",
+                "Threshold": 2,
+                "Period": 60,
+                "EvaluationPeriods": 120,
+                "TreatMissingData": "notBreaching"
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "0e43e6dd-f1f6-42ef-b11e-9aeb07d173d1"
+                }
+            }
+        }
+    },
+    "Outputs": {
+        "JenkinsELB": {
+            "Description": "Jenkins URL",
+            "Value": {
+                "Fn::Join": [
+                    "",
+                    [
+                        "http://",
+                        {
+                            "Fn::GetAtt": [
+                                "JenkinsELB",
+                                "DNSName"
+                            ]
+                        }
+                    ]
+                ]
+            }
+        }
+    },
+    "Metadata": {
+        "AWS::CloudFormation::Designer": {
+            "917a1a8a-3b3d-4acd-91e1-a79d101b9119": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 60,
+                    "y": 840
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "ac429c18-92d5-4d83-9efd-b09a4a520157": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 180,
+                    "y": 840
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "760682ab-97b9-4697-8c96-12e9ccb96f7f": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 300,
+                    "y": 840
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "b80b3e71-e111-4b4c-9c8a-b0b98dad58f2": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 420,
+                    "y": 840
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "da347b7d-72c3-4882-b56c-72838717ebb4": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 540,
+                    "y": 840
+                },
+                "z": 1,
+                "embeds": [],
+                "isassociatedwith": [
+                    "b80b3e71-e111-4b4c-9c8a-b0b98dad58f2"
+                ]
+            },
+            "acb9a64e-d641-4ef1-bf90-07296d6e376a": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 660,
+                    "y": 840
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "45a4b85c-003b-4298-9a48-3c7f0fe26598": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 780,
+                    "y": 840
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752": {
+                "size": {
+                    "width": 780,
+                    "height": 690
+                },
+                "position": {
+                    "x": 30,
+                    "y": 90
+                },
+                "z": 1,
+                "embeds": [
+                    "c66008e8-da69-41d9-b5a6-f734bf1d4ed3",
+                    "9e5481d2-c8a5-47cf-910a-b2c3e7029afe",
+                    "180b6e52-771f-4396-a9c9-b84f9089d171",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d05037db-b227-46e7-8fa5-146f3ffd3052"
+                ]
+            },
+            "c66008e8-da69-41d9-b5a6-f734bf1d4ed3": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 450,
+                    "y": 450
+                },
+                "z": 2,
+                "parent": "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                "embeds": [],
+                "iscontainedinside": [
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752"
+                ]
+            },
+            "9e5481d2-c8a5-47cf-910a-b2c3e7029afe": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 570,
+                    "y": 450
+                },
+                "z": 2,
+                "parent": "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                "embeds": [],
+                "iscontainedinside": [
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752"
+                ]
+            },
+            "180b6e52-771f-4396-a9c9-b84f9089d171": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 60,
+                    "y": 540
+                },
+                "z": 2,
+                "parent": "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                "embeds": [],
+                "iscontainedinside": [
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752"
+                ]
+            },
+            "07c58891-2cca-481e-bfbd-b779d93b66e0": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 900,
+                    "y": 90
+                },
+                "z": 1,
+                "embeds": [],
+                "isassociatedwith": [
+                    "180b6e52-771f-4396-a9c9-b84f9089d171"
+                ]
+            },
+            "d6de8f43-1a42-4ecf-ac74-55835b46d83d": {
+                "size": {
+                    "width": 330,
+                    "height": 330
+                },
+                "position": {
+                    "x": 60,
+                    "y": 150
+                },
+                "z": 2,
+                "parent": "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                "embeds": [
+                    "459bec8e-c4bc-4e40-8f62-708f01b09f29",
+                    "92ada2f8-51b3-4e46-b25d-004844a58c60",
+                    "ddce9c0d-0d5b-4c66-a5b2-a6baa1e31c0a",
+                    "eb4f3f37-e11a-42ca-a49e-d331ff4fb36c",
+                    "c4836ad6-b456-4ca1-9fb6-15867fe6bfc1"
+                ],
+                "iscontainedinside": [
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752"
+                ]
+            },
+            "459bec8e-c4bc-4e40-8f62-708f01b09f29": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 90,
+                    "y": 250
+                },
+                "z": 3,
+                "parent": "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                "embeds": [],
+                "isassociatedwith": [
+                    "07c58891-2cca-481e-bfbd-b779d93b66e0"
+                ],
+                "iscontainedinside": [
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d"
+                ]
+            },
+            "b50a238c-9c7e-4348-9895-86e2f8b126c6": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 900,
+                    "y": 210
+                },
+                "z": 1,
+                "embeds": [],
+                "isassociatedwith": [
+                    "459bec8e-c4bc-4e40-8f62-708f01b09f29"
+                ]
+            },
+            "0e43e6dd-f1f6-42ef-b11e-9aeb07d173d1": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 900,
+                    "y": 330
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "0f196f02-1ee6-4c87-8216-6298866fcb95": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 900,
+                    "y": 450
+                },
+                "z": 1,
+                "embeds": [],
+                "isassociatedwith": [
+                    "459bec8e-c4bc-4e40-8f62-708f01b09f29"
+                ]
+            },
+            "43f0fb47-2788-497f-a439-c93092c7de67": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 900,
+                    "y": 570
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "92ada2f8-51b3-4e46-b25d-004844a58c60": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 180,
+                    "y": 170
+                },
+                "z": 3,
+                "parent": "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                "embeds": [],
+                "isassociatedwith": [
+                    "9e5481d2-c8a5-47cf-910a-b2c3e7029afe"
+                ],
+                "iscontainedinside": [
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d"
+                ]
+            },
+            "3f7a5738-f766-4272-a329-3e7e421443a7": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 900,
+                    "y": 690
+                },
+                "z": 1,
+                "embeds": [],
+                "isassociatedwith": [
+                    "917a1a8a-3b3d-4acd-91e1-a79d101b9119",
+                    "acb9a64e-d641-4ef1-bf90-07296d6e376a"
+                ],
+                "dependson": [
+                    "92ada2f8-51b3-4e46-b25d-004844a58c60"
+                ]
+            },
+            "ddce9c0d-0d5b-4c66-a5b2-a6baa1e31c0a": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 90,
+                    "y": 170
+                },
+                "z": 3,
+                "parent": "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                "embeds": [],
+                "isassociatedwith": [
+                    "760682ab-97b9-4697-8c96-12e9ccb96f7f",
+                    "c66008e8-da69-41d9-b5a6-f734bf1d4ed3"
+                ],
+                "iscontainedinside": [
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                    "d6de8f43-1a42-4ecf-ac74-55835b46d83d"
+                ]
+            },
+            "d05037db-b227-46e7-8fa5-146f3ffd3052": {
+                "size": {
+                    "width": 240,
+                    "height": 240
+                },
+                "position": {
+                    "x": 450,
+                    "y": 150
+                },
+                "z": 2,
+                "parent": "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                "embeds": [
+                    "59d0f610-97d0-4e85-9179-e87dbaccb7b5"
+                ],
+                "iscontainedinside": [
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752",
+                    "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752"
+                ]
+            },
+            "59d0f610-97d0-4e85-9179-e87dbaccb7b5": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 480,
+                    "y": 210
+                },
+                "z": 3,
+                "parent": "d05037db-b227-46e7-8fa5-146f3ffd3052",
+                "embeds": [],
+                "isassociatedwith": [
+                    "45a4b85c-003b-4298-9a48-3c7f0fe26598"
+                ],
+                "iscontainedinside": [
+                    "d05037db-b227-46e7-8fa5-146f3ffd3052",
+                    "d05037db-b227-46e7-8fa5-146f3ffd3052",
+                    "d05037db-b227-46e7-8fa5-146f3ffd3052",
+                    "d05037db-b227-46e7-8fa5-146f3ffd3052",
+                    "d05037db-b227-46e7-8fa5-146f3ffd3052",
+                    "d05037db-b227-46e7-8fa5-146f3ffd3052"
+                ]
+            },
+            "f6304c35-e18b-477c-ab03-8a47f3225723": {
+                "source": {
+                    "id": "d05037db-b227-46e7-8fa5-146f3ffd3052"
+                },
+                "target": {
+                    "id": "d6de8f43-1a42-4ecf-ac74-55835b46d83d"
+                },
+                "z": 2
+            },
+            "c197d599-097a-4753-9e58-26c0e221f7f0": {
+                "source": {
+                    "id": "e283d1ff-aaa6-48e1-8e3e-98bcc32e2752"
+                },
+                "target": {
+                    "id": "45a4b85c-003b-4298-9a48-3c7f0fe26598"
+                },
+                "z": 1
+            },
+            "c4836ad6-b456-4ca1-9fb6-15867fe6bfc1": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 300,
+                    "y": 250
+                },
+                "z": 3,
+                "parent": "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                "embeds": []
+            },
+            "eb4f3f37-e11a-42ca-a49e-d331ff4fb36c": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 300,
+                    "y": 170
+                },
+                "z": 3,
+                "parent": "d6de8f43-1a42-4ecf-ac74-55835b46d83d",
+                "embeds": []
+            },
+            "32780aa9-01da-42e6-9dba-aeeadeb468a6": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 60,
+                    "y": 930
+                },
+                "z": 1,
+                "embeds": [],
+                "isassociatedwith": [
+                    "180b6e52-771f-4396-a9c9-b84f9089d171"
+                ]
+            }
+        }
+    }
+}
